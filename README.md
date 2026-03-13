@@ -28,6 +28,41 @@ Upload-first helmet violation analysis platform.
 5. Start API: `make run-api`
 6. Start worker: `make run-worker`
 
+## One-Line VPS Start (Ubuntu/DigitalOcean)
+- Configure `.env` (copy from `.env.example`).
+- Run:
+  - `./setup.sh`
+
+This script handles:
+- process or docker deployment (`DEPLOY_MODE`)
+- dependency install (`INSTALL_DEPS`, `INSTALL_VISION`)
+- optional Ubuntu package install (`INSTALL_SYSTEM_DEPS`, `SYSTEM_DEPS`)
+- optional UFW rules (`ENABLE_UFW`, `UFW_ALLOW_PORTS`, `UFW_AUTO_ENABLE`)
+- API/worker startup and health check
+
+Service control:
+- `./restart.sh`
+- `./stop.sh`
+
+Important `.env` controls:
+- `DEPLOY_MODE=process|docker`
+- `API_HOST`, `API_PORT`
+- `REDIS_PORT`
+- `INSTALL_DEPS`, `INSTALL_VISION`
+- `INSTALL_SYSTEM_DEPS=1` to auto-install `ffmpeg`, `redis-server`, `curl` on Ubuntu
+- `SYSTEM_DEPS=ffmpeg,redis-server,curl` (comma-separated)
+- `ENABLE_UFW`, `UFW_ALLOW_PORTS`, `UFW_AUTO_ENABLE`
+- `ENABLE_FFMPEG_FASTSTART=true` and `FFMPEG_BIN=ffmpeg` for MP4 post-processing compatibility
+
+Recommended first-time VPS run:
+```bash
+cp .env.example .env
+sed -i 's/^INSTALL_SYSTEM_DEPS=.*/INSTALL_SYSTEM_DEPS=1/' .env
+sed -i 's/^ENABLE_UFW=.*/ENABLE_UFW=1/' .env
+sed -i 's/^UFW_ALLOW_PORTS=.*/UFW_ALLOW_PORTS=22,8000/' .env
+./setup.sh
+```
+
 ## Quick Start (Docker Compose)
 1. `cp .env.example .env`
 2. `./scripts/bootstrap.sh`

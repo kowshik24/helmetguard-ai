@@ -4,6 +4,32 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT_DIR"
 
+env_get() {
+  local key="$1"
+  local default_val="$2"
+  if [ -f .env ]; then
+    local line
+    line="$(grep -E "^${key}=" .env | tail -n 1 || true)"
+    if [ -n "$line" ]; then
+      local value="${line#*=}"
+      value="${value%$'\r'}"
+      echo "$value"
+      return
+    fi
+  fi
+  echo "$default_val"
+}
+
+run_cmd() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+  else
+    "$@"
+  fi
+}
+
 stop_pid_file() {
   local file="$1"
   if [ -f "$file" ]; then
@@ -20,11 +46,18 @@ stop_pid_file() {
   fi
 }
 
-stop_pid_file "logs/api.pid"
-stop_pid_file "logs/worker.pid"
+DEPLOY_MODE="${DEPLOY_MODE:-$(env_get DEPLOY_MODE process)}"
 
-if [ -f "logs/redis.pid" ]; then
-  stop_pid_file "logs/redis.pid"
+if [ "$DEPLOY_MODE" = "docker" ]; then
+  if command -v docker >/dev/null 2>&1; then
+    run_cmd docker compose --env-file .env -f infra/compose/docker-compose.yml down --remove-orphans || true
+  fi
+  echo "Stopped docker services."
+  exit 0
 fi
 
-echo "Stopped API/worker (and Redis if started by setup script)."
+stop_pid_file "logs/api.pid"
+stop_pid_file "logs/worker.pid"
+stop_pid_file "logs/redis.pid"
+
+echo "Stopped process-mode services (API/worker/managed Redis)."

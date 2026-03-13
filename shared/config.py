@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     yolo_tracker_config: str = "bytetrack.yaml"
     target_classes_raw: str = "person,motorcycle,helmet,license_plate"
     enable_ocr: bool = True
+    enable_ffmpeg_faststart: bool = True
+    ffmpeg_bin: str = "ffmpeg"
     violation_ema_alpha: float = 0.35
     min_violation_frames: int = 3
     min_violation_score: float = 0.55

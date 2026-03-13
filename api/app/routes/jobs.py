@@ -1,5 +1,8 @@
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from api.app.db.models import OcrStatus
@@ -44,19 +47,51 @@ def get_job_results(
 def download_job_artifact(
     job_id: str,
     artifact_type: str,
+    download: bool = Query(default=False),
     db: Session = Depends(get_db),
 ) -> FileResponse:
     service = JobService(db)
     path = service.resolve_job_artifact(job_id, artifact_type)
-    return FileResponse(path=path, filename=path.name)
+    media_type = "video/mp4" if path.suffix.lower() == ".mp4" else None
+    if download:
+        return FileResponse(path=path, filename=path.name, media_type=media_type)
+    return StreamingResponse(
+        iter([path.read_bytes()]),
+        media_type=media_type or "application/octet-stream",
+        headers={
+            "Content-Disposition": "inline",
+            "Accept-Ranges": "bytes",
+        },
+    )
 
 
 @router.get("/{job_id}/violations/{violation_id}/evidence")
 def download_violation_evidence(
     job_id: str,
     violation_id: str,
+    download: bool = Query(default=False),
     db: Session = Depends(get_db),
 ) -> FileResponse:
     service = JobService(db)
     path = service.resolve_evidence_artifact(job_id, violation_id)
-    return FileResponse(path=path, filename=path.name)
+    media_type = _guess_media_type(path)
+    if download:
+        return FileResponse(path=path, filename=path.name, media_type=media_type)
+    return StreamingResponse(
+        iter([path.read_bytes()]),
+        media_type=media_type or "application/octet-stream",
+        headers={"Content-Disposition": "inline"},
+    )
+
+
+def _guess_media_type(path: Path) -> str | None:
+    ext = path.suffix.lower()
+    if ext in {".jpg", ".jpeg"}:
+        return "image/jpeg"
+    if ext == ".png":
+        return "image/png"
+    if ext == ".svg":
+        return "image/svg+xml"
+    if ext == ".mp4":
+        return "video/mp4"
+    return None

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
+import subprocess
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -150,6 +152,7 @@ class VideoAnalyzer:
 
         cap.release()
         writer.release()
+        self._optimize_mp4(output_video_path)
 
         output_video_uri = str(output_video_path)
         report_uri = self._save_report(job_id, input_video_uri, output_video_uri, violations)
@@ -367,10 +370,7 @@ class VideoAnalyzer:
 
     def _save_evidence_image(self, job_id: str, frame, box: tuple[float, float, float, float]) -> str:
         if cv2 is None:
-            return self.storage.save_artifact(
-                f"{job_id}/evidence_{uuid.uuid4().hex[:8]}.txt",
-                b"Evidence placeholder",
-            )
+            return self._save_placeholder_evidence_image(job_id)
 
         h, w = frame.shape[:2]
         x1, y1, x2, y2 = clamp_box(box, w, h)
@@ -380,10 +380,7 @@ class VideoAnalyzer:
 
         ok, encoded = cv2.imencode(".jpg", crop)
         if not ok:
-            return self.storage.save_artifact(
-                f"{job_id}/evidence_{uuid.uuid4().hex[:8]}.txt",
-                b"Evidence encoding failed",
-            )
+            return self._save_placeholder_evidence_image(job_id)
         return self.storage.save_artifact(f"{job_id}/evidence_{uuid.uuid4().hex[:8]}.jpg", encoded.tobytes())
 
     def _annotate_frame(
@@ -463,6 +460,7 @@ class VideoAnalyzer:
     ) -> tuple[str, str, list[ViolationRecord]]:
         output_video_name = f"{job_id}/annotated_{input_path.name}"
         output_video_uri = self.storage.save_artifact(output_video_name, input_path.read_bytes())
+        self._optimize_mp4(Path(output_video_uri))
         violations = self._generate_placeholder_violations(job_id)
         report_uri = self._save_report(job_id, str(input_path), output_video_uri, violations)
         if progress_callback:
@@ -470,10 +468,7 @@ class VideoAnalyzer:
         return output_video_uri, report_uri, violations
 
     def _generate_placeholder_violations(self, job_id: str) -> list[ViolationRecord]:
-        evidence_uri = self.storage.save_artifact(
-            f"{job_id}/evidence_{uuid.uuid4().hex[:8]}.txt",
-            b"Fallback evidence artifact. Install OpenCV + model weights for real inference.",
-        )
+        evidence_uri = self._save_placeholder_evidence_image(job_id)
         return [
             ViolationRecord(
                 track_id="bike-1",
@@ -486,3 +481,49 @@ class VideoAnalyzer:
                 evidence_image_uri=evidence_uri,
             )
         ]
+
+    def _save_placeholder_evidence_image(self, job_id: str) -> str:
+        svg = b"""<svg xmlns='http://www.w3.org/2000/svg' width='640' height='360'>
+<rect width='100%%' height='100%%' fill='#0f172a'/>
+<text x='50%%' y='42%%' fill='#e2e8f0' text-anchor='middle' font-size='24' font-family='sans-serif'>Evidence Unavailable</text>
+<text x='50%%' y='56%%' fill='#94a3b8' text-anchor='middle' font-size='16' font-family='sans-serif'>Install vision dependencies for real crops</text>
+</svg>"""
+        return self.storage.save_artifact(f"{job_id}/evidence_{uuid.uuid4().hex[:8]}.svg", svg)
+
+    def _optimize_mp4(self, path: Path) -> None:
+        if not self.settings.enable_ffmpeg_faststart:
+            return
+        if path.suffix.lower() != ".mp4":
+            return
+
+        ffmpeg_bin = self.settings.ffmpeg_bin
+        if not shutil.which(ffmpeg_bin):
+            logger.warning("ffmpeg not found, skipping faststart optimization for %s", path)
+            return
+
+        temp_path = path.with_name(f"{path.stem}.faststart{path.suffix}")
+        cmd = [
+            ffmpeg_bin,
+            "-y",
+            "-i",
+            str(path),
+            "-c",
+            "copy",
+            "-movflags",
+            "+faststart",
+            str(temp_path),
+        ]
+        try:
+            result = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=180)
+            if result.returncode != 0:
+                logger.warning("ffmpeg faststart failed for %s: %s", path, result.stderr.strip())
+                if temp_path.exists():
+                    temp_path.unlink(missing_ok=True)
+                return
+
+            if temp_path.exists() and temp_path.stat().st_size > 0:
+                temp_path.replace(path)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ffmpeg optimization error for %s: %s", path, exc)
+            if temp_path.exists():
+                temp_path.unlink(missing_ok=True)

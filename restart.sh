@@ -5,4 +5,4 @@ ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT_DIR"
 
 ./stop.sh
-INSTALL_VISION="${INSTALL_VISION:-0}" ./setup.sh
+./setup.sh
