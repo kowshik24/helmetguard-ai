@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HelmetGuard AI - Results</title>
+    <style>
+      body { font-family: "Segoe UI", sans-serif; margin: 24px; background: #f8fafc; color: #1f2937; }
+      .row { display:flex; gap:12px; flex-wrap:wrap; margin-bottom: 12px; }
+      .card { background: white; border-radius: 12px; padding: 14px; box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+      .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+      .meta { color:#6b7280; font-size: 13px; }
+      .thumb { width:100%; border-radius:8px; border:1px solid #d1d5db; background:#f3f4f6; }
+      .top { margin-bottom: 16px; }
+      a { color:#0f766e; text-decoration:none; }
+      button { background: #0f766e; color: white; border: none; border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+      select, input { padding: 8px; border:1px solid #d1d5db; border-radius: 8px; }
+    </style>
+  </head>
+  <body>
+    <div class="top card">
+      <h2 id="title">Job Results</h2>
+      <div class="row">
+        <select id="ocrFilter">
+          <option value="">OCR: all</option>
+          <option value="success">OCR: success</option>
+          <option value="not_visible">OCR: not visible</option>
+          <option value="failed">OCR: failed</option>
+        </select>
+        <select id="plateFilter">
+          <option value="">Plate: all</option>
+          <option value="true">Plate: present</option>
+          <option value="false">Plate: missing</option>
+        </select>
+        <input id="helmetFilter" type="number" min="0" value="0" />
+        <button id="applyBtn">Apply</button>
+      </div>
+      <div id="summary" class="meta"></div>
+      <div class="row" id="downloads"></div>
+    </div>
+
+    <div id="violations" class="grid"></div>
+
+    <script>
+      const jobId = window.location.pathname.split('/').pop();
+      const titleEl = document.getElementById('title');
+      const summaryEl = document.getElementById('summary');
+      const downloadsEl = document.getElementById('downloads');
+      const violationsEl = document.getElementById('violations');
+
+      function query() {
+        const p = new URLSearchParams();
+        const ocr = document.getElementById('ocrFilter').value;
+        const plate = document.getElementById('plateFilter').value;
+        const minNoHelmet = document.getElementById('helmetFilter').value || '0';
+        if (ocr) p.set('ocr_status', ocr);
+        if (plate) p.set('has_plate', plate);
+        p.set('min_no_helmet', minNoHelmet);
+        return p.toString();
+      }
+
+      function cardHtml(v) {
+        const img = `/api/v1/jobs/${jobId}/violations/${v.id}/evidence`;
+        const evidenceLink = `<a href="${img}" target="_blank">Download evidence</a>`;
+        const plate = v.plate_text || 'N/A';
+        const conf = v.plate_confidence == null ? 'N/A' : v.plate_confidence.toFixed(3);
+        return `
+          <div class="card">
+            <img class="thumb" src="${img}" alt="evidence" />
+            <div><strong>${v.track_id}</strong> @ ${v.timestamp_sec}s</div>
+            <div class="meta">Riders: ${v.rider_count} | No helmet: ${v.no_helmet_count}</div>
+            <div class="meta">OCR: ${v.ocr_status}</div>
+            <div class="meta">Plate: ${plate} (conf: ${conf})</div>
+            <div>${evidenceLink}</div>
+          </div>
+        `;
+      }
+
+      async function loadResults() {
+        const qs = query();
+        const url = qs ? `/api/v1/jobs/${jobId}/results?${qs}` : `/api/v1/jobs/${jobId}/results`;
+        const res = await fetch(url);
+        const data = await res.json();
+
+        titleEl.textContent = `Job ${data.job_id} (${data.status})`;
+        summaryEl.textContent = `Violations: ${data.total_violations}`;
+        downloadsEl.innerHTML = `
+          <a href="/api/v1/jobs/${jobId}/artifacts/report" target="_blank">Report JSON</a>
+          <a href="/api/v1/jobs/${jobId}/artifacts/video" target="_blank">Annotated Video</a>
+        `;
+
+        if (!data.violations || !data.violations.length) {
+          violationsEl.innerHTML = `<div class="card">No violations found for selected filters.</div>`;
+          return;
+        }
+
+        violationsEl.innerHTML = data.violations.map(cardHtml).join('');
+      }
+
+      document.getElementById('applyBtn').addEventListener('click', loadResults);
+      loadResults();
+    </script>
+  </body>
+</html>

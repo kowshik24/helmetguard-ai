@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HelmetGuard AI</title>
+    <style>
+      body { font-family: "Segoe UI", sans-serif; margin: 24px; background: #f8fafc; color: #1f2937; }
+      .card { background: white; border-radius: 12px; padding: 16px; box-shadow: 0 2px 10px rgba(0,0,0,.08); max-width: 920px; }
+      button { background: #0f766e; color: white; border: none; border-radius: 8px; padding: 10px 14px; cursor: pointer; }
+      pre { background: #111827; color: #f9fafb; padding: 12px; border-radius: 8px; overflow: auto; }
+      .muted { color: #6b7280; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>HelmetGuard AI</h1>
+      <p class="muted">Upload a video to create an analysis job.</p>
+
+      <input id="videoFile" type="file" accept="video/*" />
+      <button id="uploadBtn">Upload & Analyze</button>
+      <p id="status"></p>
+      <div style="display:flex; gap:12px; flex-wrap:wrap; margin: 8px 0 12px 0;">
+        <select id="ocrFilter">
+          <option value="">OCR: all</option>
+          <option value="success">OCR: success</option>
+          <option value="not_visible">OCR: not visible</option>
+          <option value="failed">OCR: failed</option>
+        </select>
+        <select id="plateFilter">
+          <option value="">Plate: all</option>
+          <option value="true">Plate: present</option>
+          <option value="false">Plate: missing</option>
+        </select>
+        <input id="helmetFilter" type="number" min="0" value="0" style="width:140px;" />
+        <button id="applyFilterBtn">Apply Filters</button>
+      </div>
+      <pre id="results"></pre>
+      <div id="downloads" class="muted" style="margin-top:10px;"></div>
+      <div id="resultsPageLink" class="muted" style="margin-top:6px;"></div>
+    </div>
+
+    <script>
+      const statusEl = document.getElementById('status');
+      const resultsEl = document.getElementById('results');
+      const uploadBtn = document.getElementById('uploadBtn');
+      const applyFilterBtn = document.getElementById('applyFilterBtn');
+      const downloadsEl = document.getElementById('downloads');
+      const resultsPageLinkEl = document.getElementById('resultsPageLink');
+      let latestJobId = null;
+
+      function buildFilterQuery() {
+        const params = new URLSearchParams();
+        const ocr = document.getElementById('ocrFilter').value;
+        const plate = document.getElementById('plateFilter').value;
+        const minNoHelmet = document.getElementById('helmetFilter').value || '0';
+        if (ocr) params.set('ocr_status', ocr);
+        if (plate) params.set('has_plate', plate);
+        params.set('min_no_helmet', minNoHelmet);
+        return params.toString();
+      }
+
+      async function fetchResults(jobId) {
+        const query = buildFilterQuery();
+        const url = query ? `/api/v1/jobs/${jobId}/results?${query}` : `/api/v1/jobs/${jobId}/results`;
+        const rr = await fetch(url);
+        const result = await rr.json();
+        resultsEl.textContent = JSON.stringify(result, null, 2);
+        if (!result || !result.job_id) return;
+        const links = [];
+        links.push(`<a href="/api/v1/jobs/${result.job_id}/artifacts/report" target="_blank">Download report</a>`);
+        links.push(`<a href="/api/v1/jobs/${result.job_id}/artifacts/video" target="_blank">Download annotated video</a>`);
+        downloadsEl.innerHTML = links.join(' | ');
+        resultsPageLinkEl.innerHTML = `<a href="/jobs/${result.job_id}" target="_blank">Open dedicated results page</a>`;
+      }
+
+      async function pollJob(jobId) {
+        let done = false;
+        while (!done) {
+          const res = await fetch(`/api/v1/jobs/${jobId}`);
+          const data = await res.json();
+          statusEl.textContent = `Job ${jobId}: ${data.status} (${data.progress_pct}%)`;
+
+          if (data.status === 'completed' || data.status === 'failed') {
+            done = true;
+            await fetchResults(jobId);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+        }
+      }
+
+      uploadBtn.addEventListener('click', async () => {
+        const fileInput = document.getElementById('videoFile');
+        if (!fileInput.files || !fileInput.files[0]) {
+          statusEl.textContent = 'Please choose a video file.';
+          return;
+        }
+        const form = new FormData();
+        form.append('file', fileInput.files[0]);
+        statusEl.textContent = 'Uploading...';
+        resultsEl.textContent = '';
+
+        const response = await fetch('/api/v1/jobs', { method: 'POST', body: form });
+        const payload = await response.json();
+        if (!response.ok) {
+          statusEl.textContent = `Error: ${payload.detail || 'Upload failed'}`;
+          return;
+        }
+
+        statusEl.textContent = `Job created: ${payload.job_id}`;
+        latestJobId = payload.job_id;
+        await pollJob(payload.job_id);
+      });
+
+      applyFilterBtn.addEventListener('click', async () => {
+        if (!latestJobId) {
+          statusEl.textContent = 'Run a job first to apply filters.';
+          return;
+        }
+        await fetchResults(latestJobId);
+      });
+    </script>
+  </body>
+</html>
